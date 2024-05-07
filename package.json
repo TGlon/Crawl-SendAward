@@ -18,6 +18,7 @@
     "date-fns": "^3.6.0",
     "express": "^4.19.2",
     "mongoose": "^8.3.2",
+    "node-cron": "^3.0.3",
     "tonweb": "^0.0.66",
     "tonweb-mnemonic": "^1.0.1"
   },

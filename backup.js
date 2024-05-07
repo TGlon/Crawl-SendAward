@@ -104,27 +104,21 @@ const Account = mongoose.model("Account", accountSchema);
 const awardSchema = new mongoose.Schema({
   totalFee: { type: String },
   awardfee: { type: String },
-  receivingFee: { type: String}
+  receivingFee: { type: String },
 });
 const Award = mongoose.model("Award", awardSchema);
-// const statusAwardSchema = new mongoose.Schema({
-//   AddressWallet: { type: String },
-//   Award: { type: String },
-//   status: { type: String },
-//   fee: { type: String },
-// });
-// const StatusAward = mongoose.model("StatusAward", statusAwardSchema);
-// app.get('/add-account', (req, res) => {
-//     const newAccount = new Account({
-//       WalletAddress: '0QBnRzN8w7CcLLneIZ48mFjmTxeAUDmIjV_y3upAOolxUojU'
-//     });
-
-//     newAccount.save()
-//       .then(() => res.send('New account added successfully'))
-//       .catch(err => res.status(500).send('Error adding account: ' + err.message));
-// });
+const settingSchema = new mongoose.Schema({
+  StartTime: {type: Date}
+})
+const Setting = mongoose.model("Setting", settingSchema);
+const currencySchema = new mongoose.Schema({
+  TON: {type: String},
+  VND: {type: String},
+  USD: {type: String}
+});
+const Currency = mongoose.model("Currency", currencySchema);
 // Route to fetch transactions
-
+//Chuyển thời gian của utime trong transaction
 function convertToUnixTimestamp(dateTime) {
   // Create a Date object from the input date and time
   const date = new Date(dateTime);
@@ -134,7 +128,11 @@ function convertToUnixTimestamp(dateTime) {
 
   return unixTimestamp;
 }
+//lấy các transaction của account trong hệ thống
+const startDate = new Date('2024-05-04T00:00:00'); 
+let currentDate = new Date(startDate);
 app.get("/transactions", async (req, res) => {
+  console.log("currentdate:", currentDate);
   try {
     // Query all accounts in the database
     const accounts = await Account.find();
@@ -150,16 +148,24 @@ app.get("/transactions", async (req, res) => {
       return axios
         .get(apiUrl)
         .then(async (response) => {
-          const a = convertToUnixTimestamp("2024-05-02T00:00:00");
-          const b = convertToUnixTimestamp("2024-05-02T23:59:00");
-          // Filter transactions based on `utime`
-          const targetStartTime = a;
-          const targetEndTime = b;
+          //set thời gian bắt đầu và kết thúc khi get transaction
+          // const a = convertToUnixTimestamp("2024-05-04T00:00:00");
+          // const b = convertToUnixTimestamp("2024-05-04T23:59:00");
+          // // Filter transactions based on `utime`
+          // const targetStartTime = a;
+          // const targetEndTime = b;
+          // Prepare to fetch transactions for all accounts
 
+          const startTimestamp = convertToUnixTimestamp(
+            currentDate.toISOString()
+          );
+          const endOfDay = new Date(currentDate);
+          endOfDay.setHours(23, 59, 59, 999); // Đặt thời gian kết thúc của ngày
+          const endTimestamp = convertToUnixTimestamp(endOfDay.toISOString());
           const filteredTransactions = response.data.transactions.filter(
             (transaction) => {
               const utime = transaction.utime;
-              return utime >= targetStartTime && utime <= targetEndTime;
+              return utime >= startTimestamp && utime <= endTimestamp;
             }
           );
           //   filteredTransactions.forEach(async transaction => {
@@ -232,13 +238,29 @@ app.get("/transactions", async (req, res) => {
     const filteredResults = results
       .filter((result) => result.status === "fulfilled")
       .map((result) => result.value);
-
+    currentDate.setDate(currentDate.getDate() + 1);
     // Return the filtered results
     res.json(filteredResults);
   } catch (error) {
     console.error("Error fetching transactions:", error);
     res.status(500).send("Error processing request: " + error.message);
   }
+});
+function fetchTransactions() {
+  axios.get('http://localhost:3000/transactions')
+    .then(response => {
+      console.log('Transactions fetched successfully:', response.data);
+    })
+    .catch(error => {
+      console.error('Error fetching transactions:', error.message);
+    });
+}
+const cron = require('node-cron');
+
+// Lên lịch gọi API 
+cron.schedule('0 0 * * * *', () => {
+  console.log('Fetching transactions daily');
+  fetchTransactions();
 });
 ///////////////////////////Transfer///////////////////////////////////////////////
 const client = new TonClient({
@@ -281,48 +303,68 @@ const TonWeb = require("tonweb");
 const { JettonWallet } = TonWeb.token.jetton;
 
 async function sendAward(destinationAddress, amount) {
-  console.log(amount);
-  const endpoint = "https://testnet.toncenter.com/api/v2/jsonRPC";
-  const apiKey =
-    "a69144368c0811648a36446710aee333bf2b616ac46f1d325b841008fb346b1a"; 
-
-  // Initialize TonWeb with HTTP provider
-  const tonweb = new TonWeb(new TonWeb.HttpProvider(endpoint, { apiKey }));
-
-  // Initialize wallet using mnemonics to derive the keyPair
-  const mnemonics =
-    "birth gather mechanic crouch female cake warrior year satisfy midnight foam chef ahead bus wasp where valve fly artist heavy smart pause brave mail".split(
-      " "
-    );
-  let keyPair = await mnemonicToPrivateKey(mnemonics); 
-  const WalletClass = tonweb.wallet.all["v4R2"];
-  const wallet = new WalletClass(tonweb.wallet.provider, {
-    publicKey: keyPair.publicKey,
-  });
-  const seqno = await wallet.methods.seqno().call();
-
-  const jettonWallet = new JettonWallet(tonweb.provider, {
-    address: 'kQBLbEEoNfVqNBzxA0h7k4co1JeHXfGxZEeLTuEuEH3kU2SB'
-  });
-  const jettonWalletDes = new JettonWallet(tonweb.provider, {
-    address: destinationAddress
-  });
   try {
+    console.log(amount);
+    const endpoint = "https://testnet.toncenter.com/api/v2/jsonRPC";
+    const apiKey =
+      "a69144368c0811648a36446710aee333bf2b616ac46f1d325b841008fb346b1a";
+
+    // Initialize TonWeb with HTTP provider
+    const tonweb = new TonWeb(new TonWeb.HttpProvider(endpoint, { apiKey }));
+
+    // Initialize wallet using mnemonics to derive the keyPair
+    const mnemonics =
+      "birth gather mechanic crouch female cake warrior year satisfy midnight foam chef ahead bus wasp where valve fly artist heavy smart pause brave mail".split(
+        " "
+      );
+    let keyPair = await mnemonicToPrivateKey(mnemonics);
+    const WalletClass = tonweb.wallet.all["v4R2"];
+    const wallet = new WalletClass(tonweb.wallet.provider, {
+      publicKey: keyPair.publicKey,
+    });
+    const seqno = await wallet.methods.seqno().call();
+
+    const jettonMinter = new TonWeb.token.jetton.JettonMinter(tonweb.provider, {
+      address: "kQApClTLLRtxIvASOpjvXfOInGVI_n8vvAo9T7tcmQTHyaDZ", // Contract address
+    });
+    const jettonWalletAddress = await jettonMinter.getJettonWalletAddress(
+      new TonWeb.utils.Address(
+        "0QB56RbbrikjhcKVegAfhExt9_RjOeDiyzaN2_IwtLEALhgm"
+      )
+    );
+    console.log(
+      "My jetton wallet for is " +
+        jettonWalletAddress.toString(true, true, true)
+    );
+
+    const jettonWallet = new TonWeb.token.jetton.JettonWallet(tonweb.provider, {
+      address: jettonWalletAddress,
+    });
+
+    const jettonWalletDes = new JettonWallet(tonweb.provider, {
+      address: destinationAddress,
+    });
+
     const transferResult = await wallet.methods
       .transfer({
         secretKey: keyPair.secretKey,
-        toAddress: jettonWallet.address,
-        amount: TonWeb.utils.toNano('0.05'), // Convert amount to string
+        toAddress: jettonWallet.address, // address of Jetton wallet of Jetton sender
+        amount: TonWeb.utils.toNano("0.05"), // total amount of TONs attached to the transfer message
         seqno: seqno,
         payload: await jettonWallet.createTransferBody({
-          tokenAmount: amount, // Jetton amount (in basic indivisible units)
-          toAddress: new TonWeb.utils.Address(jettonWalletDes.address.toString()), // recepient user's wallet address (not Jetton wallet)
-          forwardAmount: TonWeb.utils.toNano('0.01'), // some amount of TONs to invoke Transfer notification message
-          forwardPayload: new TextEncoder().encode('gift'), // text comment for Transfer notification message
-          responseAddress: new TonWeb.utils.Address(jettonWalletDes.address.toString()) // return the TONs after deducting commissions back to the sender's wallet address
+          jettonAmount: TonWeb.utils.toNano(amount.toString()), // Jetton amount (in basic indivisible units)
+          toAddress: new TonWeb.utils.Address(
+            jettonWalletDes.address.toString()
+          ), // recepient user's wallet address (not Jetton wallet)
+          forwardAmount: TonWeb.utils.toNano("0.01"), // some amount of TONs to invoke Transfer notification message
+          forwardPayload: new TextEncoder().encode("gift"), // text comment for Transfer notification message
+          responseAddress: new TonWeb.utils.Address(
+            jettonWalletDes.address.toString()
+          ), // return the TONs after deducting commissions back to the sender's wallet address
         }),
         sendMode: 3,
-      }).send()
+      })
+      .send();
 
     return transferResult;
   } catch (error) {
@@ -331,10 +373,12 @@ async function sendAward(destinationAddress, amount) {
   }
 }
 
-app.get("/sendtoken", async (req, res) => {
-  const address = "0QBnRzN8w7CcLLneIZ48mFjmTxeAUDmIjV_y3upAOolxUojU";
-  const amountToSend = 10;
-  const amount = amountToSend * Math.pow(10, 9);;
+app.get("/sendtoken/:address", async (req, res) => {
+  // const address = "0QBnRzN8w7CcLLneIZ48mFjmTxeAUDmIjV_y3upAOolxUojU";
+  const { address } = req.params;
+  // const amountToSend = 1;
+  // const amount = amountToSend * Math.pow(10, 9);;
+  const amount = 500;
   // const tokenAddress = "kQBLbEEoNfVqNBzxA0h7k4co1JeHXfGxZEeLTuEuEH3kU2SB";
   if (!address || !amount) {
     return res.status(400).json({ error: "Address and amount are required." });
@@ -352,13 +396,28 @@ app.get("/sendtoken", async (req, res) => {
   }
 });
 ////////////////////////////////////////////////////////////
-app.get("/transfer_claim/:address/:amount", async (req, res) => {
+app.get("/transfer_claim/:address", async (req, res) => {
   try {
     const { address } = req.params;
-    // const amount = 0.02;
-    const { amount } = req.params;
+    console.log("Destination Address:", address);
+    const currency = await Currency.findOne(); 
+    // console.log(currency);
+    // const amount = currency.TON; //phí trả để nhận quà.
+    const amount = 0.02;
+    // const { amount } = req.params;
     const transactionHash = await createTransfer(address, amount);
     // nếu createTransfer thành công => send AL token and update claimed: true
+    if (transactionHash) {
+      const sendAmount = 500;
+      const sendResult = await sendAward(address, sendAmount);
+      if (sendResult) {
+        console.log("Token sent successfully");
+        // await Account.updateOne(
+        //   { "awards.awardId": { $exists: true }, WalletAddress: address },
+        //   { $set: { "awards.$.claimed": true } }
+        // );
+      }
+    }
     res.send(
       `Transfer initiated successfully, transaction hash: ${transactionHash}`
     );
